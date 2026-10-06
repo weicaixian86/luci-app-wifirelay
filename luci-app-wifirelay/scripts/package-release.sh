@@ -100,8 +100,9 @@ make -C "$SDK_DIR" defconfig
 # lucihttp builds a ucode module and includes ucode/module.h while compiling.
 # In an SDK-only, package-scoped build the runtime dependency can be selected
 # without running ucode's Build/InstallDev step first, so stage ucode
-# explicitly before entering the LuCI dependency graph.
-make -C "$SDK_DIR" -j1 package/utils/ucode/compile V=sc
+# explicitly before entering the LuCI dependency graph. ucode comes from the
+# base feed, so its build target lives under package/feeds/base.
+make -C "$SDK_DIR" -j1 package/feeds/base/ucode/compile V=sc
 
 ucode_header=$(find "$SDK_DIR/staging_dir" -type f \
 	-path '*/usr/include/ucode/module.h' -print -quit)

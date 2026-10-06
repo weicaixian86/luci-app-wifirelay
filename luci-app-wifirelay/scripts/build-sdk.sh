@@ -56,7 +56,10 @@ tar --zstd -xf "$SDK_ARCHIVE" --strip-components=1 -C "$SDK_DIR"
 		done
 		echo ">>> Installing luci feed package: luci"
 		./scripts/feeds install -p luci luci
-		for package in rpcd iwinfo ucode libucode wpad-basic-mbedtls; do
+		# Verify the source packages that were installed. Subpackages such as
+		# libucode or wpad-basic-mbedtls resolve through their source package
+		# (ucode, hostapd) and get no symlink of their own.
+		for package in rpcd iwinfo ucode hostapd; do
 			[ -e "package/feeds/base/$package" ] || {
 				echo "Core package '$package' is not available from the base feed" >&2
 				exit 1
