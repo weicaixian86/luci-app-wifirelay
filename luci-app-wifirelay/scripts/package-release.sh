@@ -88,6 +88,14 @@ set_config CONFIG_PACKAGE_luci y
 set_config CONFIG_PACKAGE_luci-base y
 set_config CONFIG_PACKAGE_rpcd y
 set_config CONFIG_PACKAGE_rpcd-mod-ucode y
+# Build-time-only selections, not runtime deps of the plugin: the luci
+# metapackage pulls uhttpd, whose PKG_BUILD_DEPENDS:=ustream-ssl builds the
+# default libustream-mbedtls variant. Its mbedtls dependency is conditional
+# (+PACKAGE_libustream-mbedtls:libmbedtls), so unless libustream-mbedtls is
+# selected here nothing stages libmbedtls and the variant fails at the CMake
+# generate step.
+set_config CONFIG_PACKAGE_libustream-mbedtls y
+set_config CONFIG_PACKAGE_libmbedtls y
 set_config CONFIG_PACKAGE_ucode y
 set_config CONFIG_PACKAGE_libucode y
 set_config CONFIG_PACKAGE_luci-app-wifirelay y
