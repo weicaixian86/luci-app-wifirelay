@@ -97,6 +97,20 @@ set_config CONFIG_BUILD_LOG y
 
 make -C "$SDK_DIR" defconfig
 
+# The compile target only exists when the scan indexed the package and the
+# config selected it; a missing index entry surfaces later as an opaque
+# "No rule to make target", so fail here with the actual reason.
+grep -q '^Package: luci-app-wifirelay$' "$SDK_DIR/tmp/.packageinfo" || {
+	echo 'luci-app-wifirelay is missing from the package index (scan failed)' >&2
+	grep -n 'luci-app-wifirelay' "$SDK_DIR/tmp/.packageinfo" 2>/dev/null || true
+	exit 1
+}
+grep -q '^CONFIG_PACKAGE_luci-app-wifirelay=y' "$SDK_DIR/.config" || {
+	echo 'CONFIG_PACKAGE_luci-app-wifirelay is not selected in .config' >&2
+	grep -n 'luci-app-wifirelay' "$SDK_DIR/.config" 2>/dev/null || true
+	exit 1
+}
+
 # lucihttp builds a ucode module and includes ucode/module.h while compiling.
 # In an SDK-only, package-scoped build the runtime dependency can be selected
 # without running ucode's Build/InstallDev step first, so stage ucode

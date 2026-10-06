@@ -8,5 +8,6 @@ LUCI_TITLE:=WiFi Relay LuCI application
 LUCI_DEPENDS:=+luci +rpcd +rpcd-mod-ucode +iwinfo +wpad-basic-mbedtls
 LUCI_PKGARCH:=all
 
-include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/luci/luci.mk
+
+# call BuildPackage - OpenWrt buildroot signature
