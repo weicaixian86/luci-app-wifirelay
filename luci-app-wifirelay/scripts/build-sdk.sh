@@ -22,9 +22,11 @@ curl -fsSL "$SDK_URL" -o "$SDK_ARCHIVE"
 mkdir -p "$SDK_DIR"
 tar --zstd -xf "$SDK_ARCHIVE" --strip-components=1 -C "$SDK_DIR"
 
-# The SDK keeps core packages in its local base feed. Register and install that
-# feed before LuCI so dependencies such as rpcd, iwinfo and libucode resolve
-# while LuCI's package index is generated. Pin LuCI to the matching release
+# Release SDKs ship a 'base' feed in feeds.conf.default that provides the core
+# packages (rpcd, iwinfo, ucode, ...); it clones the matching OpenWrt source
+# tree and must be kept exactly as shipped - both release branches already
+# declare it, and adding a second 'base' entry makes scripts/feeds abort with
+# "Duplicate feed name". Pin only the LuCI feed to the matching release
 # branch: its default branch can require a newer SDK API.
 # A clean SDK may not have a .config yet, so create the baseline target
 # configuration before package-release.sh edits package selections.
@@ -42,16 +44,17 @@ tar --zstd -xf "$SDK_ARCHIVE" --strip-components=1 -C "$SDK_DIR"
 		else
 			printf '\nsrc-git luci https://git.openwrt.org/project/luci.git;%s\n' "$LUCI_BRANCH" >> "$feed_config"
 		fi
-		# Release SDKs expose their bundled package tree through this local feed.
-		# The relative path is interpreted from feeds/, hence ../package.
-		if ! grep -qE '^src-link base ' "$feed_config"; then
-			printf 'src-link base ../package\n' >> "$feed_config"
-		fi
+		# Updating the base feed clones the OpenWrt source tree, so this step
+		# takes a while; installing both feeds afterwards makes every core and
+		# LuCI dependency resolvable to make.
 		./scripts/feeds update base luci
 		./scripts/feeds install -p base -a
 		./scripts/feeds install -p luci luci
-		for package in libnl-tiny iwinfo rpcd libubox libubus libucode; do
-			./scripts/feeds list -r base "$package" | grep -q "^$package"
+		for package in rpcd iwinfo ucode libucode; do
+			[ -e "package/feeds/base/$package" ] || {
+				echo "Core package '$package' is not available from the base feed" >&2
+				exit 1
+			}
 		done
 	})
 make -C "$SDK_DIR" defconfig
