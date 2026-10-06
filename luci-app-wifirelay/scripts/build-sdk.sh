@@ -50,16 +50,20 @@ tar --zstd -xf "$SDK_ARCHIVE" --strip-components=1 -C "$SDK_DIR"
 		# dependency closure, while installing all ~2000 feed packages is
 		# slow and fails on unrelated target-specific packages.
 		./scripts/feeds update base luci
-		for package in rpcd iwinfo ucode wpad-basic-mbedtls; do
+		# iwinfo and wpad-basic-mbedtls are deliberately NOT installed: they
+		# are not LUCI_DEPENDS entries any more because the Q30 Pro apk
+		# repository carries neither package, and nothing in the build
+		# references them.
+		for package in rpcd ucode; do
 			echo ">>> Installing base feed package: $package"
 			./scripts/feeds install -p base "$package"
 		done
 		echo ">>> Installing luci feed package: luci"
 		./scripts/feeds install -p luci luci
 		# Verify the source packages that were installed. Subpackages such as
-		# libucode or wpad-basic-mbedtls resolve through their source package
-		# (ucode, hostapd) and get no symlink of their own.
-		for package in rpcd iwinfo ucode hostapd; do
+		# libucode resolve through their source package (ucode) and get no
+		# symlink of their own.
+		for package in rpcd ucode; do
 			[ -e "package/feeds/base/$package" ] || {
 				echo "Core package '$package' is not available from the base feed" >&2
 				exit 1

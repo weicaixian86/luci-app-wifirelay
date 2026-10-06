@@ -88,8 +88,6 @@ set_config CONFIG_PACKAGE_luci y
 set_config CONFIG_PACKAGE_luci-base y
 set_config CONFIG_PACKAGE_rpcd y
 set_config CONFIG_PACKAGE_rpcd-mod-ucode y
-set_config CONFIG_PACKAGE_iwinfo y
-set_config CONFIG_PACKAGE_wpad-basic-mbedtls y
 set_config CONFIG_PACKAGE_ucode y
 set_config CONFIG_PACKAGE_libucode y
 set_config CONFIG_PACKAGE_luci-app-wifirelay y
