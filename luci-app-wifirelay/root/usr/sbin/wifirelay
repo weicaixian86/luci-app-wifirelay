@@ -1,0 +1,322 @@
+#!/bin/sh
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+CONFIG=wifirelay
+WIRELESS=wireless
+NETWORK=network
+STATE=/var/run/wifirelay.state
+
+cfg() { uci -q get "$CONFIG.$1${2:+.$2}" 2>/dev/null; }
+
+set_state() {
+	printf 'state=%s\nuplink=%s\nmessage=%s\n' "$1" "${2:-}" "${3:-}" > "$STATE"
+}
+
+normalize_encryption() {
+	case "$1" in
+		psk2+sae|sae-mixed) printf 'psk2+sae' ;;
+		psk-mixed|psk2|sae|psk|none) printf '%s' "$1" ;;
+		*) printf 'none' ;;
+	esac
+}
+
+valid_key() {
+	local key="$1" length
+	length=${#key}
+	if [ "$length" -ge 8 ] && [ "$length" -le 63 ]; then
+		return 0
+	fi
+	[ "$length" -eq 64 ] || return 1
+	case "$key" in
+		*[!0-9A-Fa-f]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+validate_ap() {
+	local band="$1" ssid encryption key
+	ssid=$(cfg "ap_$band" ssid)
+	encryption=$(normalize_encryption "$(cfg "ap_$band" encryption)")
+	key=$(cfg "ap_$band" key)
+	[ -n "$ssid" ] || { set_state error '' "Missing $band downstream SSID"; return 1; }
+	[ "${#ssid}" -le 32 ] || { set_state error '' "Invalid $band downstream SSID"; return 1; }
+	if [ "$encryption" != none ] && ! valid_key "$key"; then
+		set_state error '' "Invalid $band downstream WiFi password"
+		return 1
+	fi
+}
+
+validate_uplink() {
+	local profile="$1" encryption key
+	encryption=$(normalize_encryption "$(cfg "$profile" encryption)")
+	key=$(cfg "$profile" key)
+	if [ "$encryption" != none ] && ! valid_key "$key"; then
+		set_state error "$profile" 'Invalid upstream WiFi password'
+		return 1
+	fi
+}
+
+ensure_wifi_iface() {
+	local section="$1" device="$2" mode="$3"
+	uci -q get "$WIRELESS.$section" >/dev/null || uci set "$WIRELESS.$section=wifi-iface"
+	uci set "$WIRELESS.$section.device=$device"
+	uci set "$WIRELESS.$section.mode=$mode"
+}
+
+# The bundled defaults carry the verified Q30 Pro wireless device names. When
+# they do not exist on another mtwifi board, fall back to the first
+# wifi-device section whose band matches, per requirement 3.1 to map by band
+# capability instead of fixed radio numbers.
+resolve_device() {
+	local band="$1" device section dev_band
+	device=$(cfg "ap_$band" device)
+	if [ -z "$device" ] || ! uci -q get "wireless.$device" >/dev/null; then
+		for section in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+			dev_band=$(uci -q get "wireless.$section.band")
+			if [ "$dev_band" = "$band" ]; then
+				device=$section
+				uci set "$CONFIG.ap_$band.device=$device"
+				break
+			fi
+		done
+	fi
+	printf '%s' "$device"
+}
+
+configure_ap() {
+	local band="$1" device section encryption key ssid
+	device=$(resolve_device "$band")
+	section=$(cfg "ap_$band" section)
+	[ -n "$section" ] || section="wifirelay_ap_$band"
+	ensure_wifi_iface "$section" "$device" ap
+	uci set "$WIRELESS.$section.network=lan"
+	ssid=$(cfg "ap_$band" ssid)
+	uci set "$WIRELESS.$section.ssid=$ssid"
+	encryption=$(normalize_encryption "$(cfg "ap_$band" encryption)")
+	uci set "$WIRELESS.$section.encryption=$encryption"
+	key=$(cfg "ap_$band" key)
+	if [ "$encryption" = none ]; then
+		uci -q delete "$WIRELESS.$section.key"
+	else
+		uci set "$WIRELESS.$section.key=$key"
+	fi
+	uci -q delete "$WIRELESS.$section.disabled"
+	uci set "$CONFIG.ap_$band.section=$section"
+}
+
+configure_uplink() {
+	local band="$1" profile="$2" device section encryption key bssid ssid
+	device=$(resolve_device "$band")
+	section="wifirelay_uplink_$band"
+	ensure_wifi_iface "$section" "$device" sta
+	uci set "$WIRELESS.$section.network=wwan"
+	ssid=$(cfg "$profile" ssid)
+	uci set "$WIRELESS.$section.ssid=$ssid"
+	encryption=$(normalize_encryption "$(cfg "$profile" encryption)")
+	uci set "$WIRELESS.$section.encryption=$encryption"
+	key=$(cfg "$profile" key)
+	if [ "$encryption" = none ]; then
+		uci -q delete "$WIRELESS.$section.key"
+	else
+		uci set "$WIRELESS.$section.key=$key"
+	fi
+	bssid=$(cfg "$profile" bssid)
+	if [ -n "$bssid" ]; then
+		uci set "$WIRELESS.$section.bssid=$bssid"
+	else
+		uci -q delete "$WIRELESS.$section.bssid"
+	fi
+	uci -q delete "$WIRELESS.$section.disabled"
+}
+
+disable_iface() {
+	[ -n "$1" ] || return 0
+	uci set "$WIRELESS.$1.disabled=1"
+}
+
+ensure_network() {
+	local zone name networks
+	if ! uci -q get "$NETWORK.wwan.proto" >/dev/null; then
+		uci set "$NETWORK.wwan=interface"
+		uci set "$NETWORK.wwan.proto=dhcp"
+		uci set "$NETWORK.wwan.metric=10"
+	fi
+	for zone in $(uci -q show firewall 2>/dev/null | sed -n 's/^firewall\.\(@zone\[[0-9][0-9]*\]\|[^.=]*\)=zone$/\1/p'); do
+		name=$(uci -q get "firewall.$zone.name")
+		if [ "$name" = wan ]; then
+			networks=$(uci -q get "firewall.$zone.network" 2>/dev/null)
+			case " $networks " in
+				*" wwan "*) ;;
+				*) uci add_list "firewall.$zone.network=wwan" ;;
+			esac
+			return 0
+		fi
+	done
+}
+
+profile_sections() {
+	uci -q show "$CONFIG" | sed -n "s/^${CONFIG}\.\([^.=]*\)=uplink$/\1/p"
+}
+
+profile_lines() {
+	local preferred="$1" section enabled ssid signal band
+	for section in $(profile_sections); do
+		enabled=$(cfg "$section" enabled)
+		ssid=$(cfg "$section" ssid)
+		[ "$enabled" = 0 ] && continue
+		[ -n "$ssid" ] || continue
+		band=$(cfg "$section" band)
+		[ -n "$preferred" ] && [ "$band" != "$preferred" ] && continue
+		signal=$(cfg "$section" signal)
+		[ -n "$signal" ] || signal=-999
+		printf '%s\t%s\n' "$signal" "$section"
+	done | sort -rn -k1,1
+}
+
+profile_candidates() {
+	local preferred="$1"
+	{
+		profile_lines "$preferred"
+		profile_lines
+	} | awk -F '\t' '!seen[$2]++ { print $2 }'
+}
+
+apply_profile() {
+	local profile="$1" band other
+	band=$(cfg "$profile" band)
+	[ "$band" = 2g ] || [ "$band" = 5g ] || return 1
+	[ -n "$(cfg "$profile" ssid)" ] || return 1
+	validate_uplink "$profile" || return 1
+	other=5g
+	[ "$band" = 5g ] && other=2g
+	validate_ap "$other" || return 1
+	configure_uplink "$band" "$profile"
+	configure_ap "$other"
+	disable_iface "$(cfg "ap_$band" section)"
+	disable_iface "wifirelay_uplink_$other"
+	ensure_network
+	uci set "$CONFIG.global.active_uplink=$profile"
+	uci commit "$WIRELESS"
+	uci commit "$NETWORK"
+	uci commit firewall 2>/dev/null || true
+	/sbin/wifi reload >/dev/null 2>&1 || true
+	/etc/init.d/network reload >/dev/null 2>&1 || true
+	set_state connecting "$profile" "Applying uplink configuration"
+}
+
+check_network() {
+	local timeout host
+	timeout=$(cfg global ping_timeout); host=$(cfg global ping_host)
+	[ -n "$timeout" ] || timeout=3
+	[ -n "$host" ] || host=www.baidu.com
+	ping -c 1 -W "$timeout" "$host" >/dev/null 2>&1
+}
+
+# After a wifi reload the association and the DHCP handshake can take several
+# seconds, so poll for connectivity before declaring a profile unreachable.
+wait_online() {
+	local attempt
+	for attempt in 1 2 3 4; do
+		sleep 5
+		check_network && return 0
+	done
+	return 1
+}
+
+apply_config() {
+	local enabled profile
+	enabled=$(cfg global enabled)
+	if [ "$enabled" != 1 ]; then
+		for profile in wifirelay_uplink_2g wifirelay_uplink_5g; do
+			disable_iface "$profile"
+		done
+		uci commit "$WIRELESS"
+		/sbin/wifi reload >/dev/null 2>&1 || true
+		set_state disabled '' 'Relay service is disabled'
+		return 0
+	fi
+	for profile in $(profile_candidates "$(cfg global uplink_band)"); do
+		[ -n "$profile" ] || continue
+		apply_profile "$profile" || continue
+		if wait_online; then
+			set_state online "$profile" 'Network is reachable'
+			return 0
+		fi
+	done
+	set_state error '' 'No saved uplink is reachable'
+	return 1
+}
+
+try_other_profiles() {
+	local current="$1" profile retry=''
+	for profile in $(profile_candidates "$(cfg global uplink_band)"); do
+		[ -n "$profile" ] || continue
+		if [ "$profile" = "$current" ]; then
+			retry="$profile"
+			continue
+		fi
+		apply_profile "$profile" || continue
+		if wait_online; then
+			set_state online "$profile" 'Network recovered on alternate uplink'
+			return 0
+		fi
+	done
+	if [ -n "$retry" ]; then
+		apply_profile "$retry" || return 1
+		if wait_online; then
+			set_state online "$retry" 'Network recovered after retry'
+			return 0
+		fi
+	fi
+	return 1
+}
+
+monitor() {
+	local interval limit failures profile current
+	interval=$(cfg global check_interval); limit=$(cfg global failure_limit)
+	[ -n "$interval" ] || interval=30
+	[ -n "$limit" ] || limit=3
+	failures=0
+	while :; do
+		if [ "$(cfg global enabled)" != 1 ]; then
+			set_state disabled '' 'Relay service is disabled'
+			sleep "$interval"
+			continue
+		fi
+		current=$(cfg global active_uplink)
+		if [ -z "$current" ] || [ "$(cfg "$current" enabled)" != 1 ]; then
+			if ! apply_config; then
+				sleep "$interval"
+				continue
+			fi
+			current=$(cfg global active_uplink)
+		fi
+		if check_network; then
+			failures=0
+			set_state online "$current" 'Network is reachable'
+		else
+			failures=$((failures + 1))
+			set_state degraded "$current" "Ping failure $failures/$limit"
+			if [ "$failures" -ge "$limit" ]; then
+				if try_other_profiles "$current"; then
+					failures=0
+				else
+					set_state error "$current" 'All saved uplinks are unavailable'
+				fi
+			fi
+		fi
+		sleep "$interval"
+	done
+}
+
+case "$1" in
+	apply) apply_config ;;
+	monitor) monitor ;;
+	check) check_network ;;
+	status)
+		[ -f "$STATE" ] && cat "$STATE" || set_state stopped '' 'No status available'
+		;;
+	*) echo "Usage: $0 {apply|monitor|check|status}" >&2; exit 2 ;;
+esac

@@ -1,0 +1,196 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag
+        required: true
+        type: string
+      release_description:
+        description: Release description
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  build-ipk:
+    name: Build IPK (OpenWrt 24.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[vV]?[0-9]+(\.[0-9]+)+$ ]] || {
+            echo "Invalid release tag: $RELEASE_TAG (expected v<version>, e.g. v2.0.01)" >&2
+            exit 1
+          }
+          if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
+            echo "Git tag ${RELEASE_TAG} already exists" >&2
+            exit 1
+          fi
+      - name: Build IPK package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/openwrt-24.10-build.log"
+          if ! sh ./luci-app-wifirelay/scripts/build-sdk.sh 24.10 "$RELEASE_TAG" "$RUNNER_TEMP/openwrt-24.10" >"$log" 2>&1; then
+            printf '\n--- OpenWrt 24.10 error summary ---\n'
+            grep -n -i -E 'error:|fatal error:|failed|make\[[0-9]+\].*\*\*\*|No rule to make target|undefined reference|missing dependencies|cannot find|not found|CMake Error' "$log" | tail -n 160 || true
+            printf '\n--- OpenWrt 24.10 log tail ---\n'
+            tail -n 400 "$log"
+            exit 1
+          fi
+      - name: Upload build log on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-24.10-build-log
+          path: |
+            ${{ runner.temp }}/openwrt-24.10-build.log
+            ${{ runner.temp }}/openwrt-24.10/sdk-24.10/logs/**
+          if-no-files-found: error
+      - name: Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifirelay-ipk-openwrt-24.10
+          path: ${{ runner.temp }}/openwrt-24.10/dist/**/*.ipk
+          if-no-files-found: error
+
+  build-apk:
+    name: Build APK (OpenWrt 25.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[vV]?[0-9]+(\.[0-9]+)+$ ]] || {
+            echo "Invalid release tag: $RELEASE_TAG (expected v<version>, e.g. v2.0.01)" >&2
+            exit 1
+          }
+          if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
+            echo "Git tag ${RELEASE_TAG} already exists" >&2
+            exit 1
+          fi
+      - name: Build APK package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/openwrt-25.12-build.log"
+          if ! sh ./luci-app-wifirelay/scripts/build-sdk.sh 25.12 "$RELEASE_TAG" "$RUNNER_TEMP/openwrt-25.12" >"$log" 2>&1; then
+            printf '\n--- OpenWrt 25.12 error summary ---\n'
+            grep -n -i -E 'error:|fatal error:|failed|make\[[0-9]+\].*\*\*\*|No rule to make target|undefined reference|missing dependencies|cannot find|not found|CMake Error' "$log" | tail -n 160 || true
+            printf '\n--- OpenWrt 25.12 log tail ---\n'
+            tail -n 400 "$log"
+            exit 1
+          fi
+      - name: Upload build log on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-25.12-build-log
+          path: |
+            ${{ runner.temp }}/openwrt-25.12-build.log
+            ${{ runner.temp }}/openwrt-25.12/sdk-25.12/logs/**
+          if-no-files-found: error
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifirelay-apk-openwrt-25.12
+          path: ${{ runner.temp }}/openwrt-25.12/dist/**/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-ipk, build-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Reject existing git tag or release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
+            echo "Git tag ${RELEASE_TAG} already exists; refusing to overwrite" >&2
+            exit 1
+          fi
+          if gh release view "${RELEASE_TAG}" -R "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; refusing to overwrite" >&2
+            exit 1
+          fi
+      - name: Collect, rename and validate release files
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            [vV]*) VERSION="${RELEASE_TAG#?}" ;;
+            *) VERSION="$RELEASE_TAG" ;;
+          esac
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]] || {
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          }
+          ipk_count=$(find artifacts -type f -name '*.ipk' | wc -l)
+          apk_count=$(find artifacts -type f -name '*.apk' | wc -l)
+          [ "$ipk_count" -eq 1 ] || { echo "Expected exactly 1 IPK, found $ipk_count" >&2; exit 1; }
+          [ "$apk_count" -eq 1 ] || { echo "Expected exactly 1 APK, found $apk_count" >&2; exit 1; }
+          mkdir -p release
+          find artifacts -type f -name '*.ipk' -exec cp '{}' "release/luci-app-wifirelay_${VERSION}-aarch64.ipk" ';'
+          find artifacts -type f -name '*.apk' -exec cp '{}' "release/luci-app-wifirelay_${VERSION}-aarch64.apk" ';'
+          for f in "release/luci-app-wifirelay_${VERSION}-aarch64.ipk" \
+                   "release/luci-app-wifirelay_${VERSION}-aarch64.apk"; do
+            [ -s "$f" ] || { echo "Release file missing or empty: $f" >&2; exit 1; }
+          done
+      - name: Generate release body
+        env:
+          RELEASE_DESCRIPTION: ${{ inputs.release_description }}
+        run: |
+          set -euo pipefail
+          export TZ=Asia/Shanghai
+          {
+            printf 'Build time (Asia/Shanghai): %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+            printf '%s\n' "$RELEASE_DESCRIPTION"
+          } > release-notes.md
+      - name: Create release and upload packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            [vV]*) VERSION="${RELEASE_TAG#?}" ;;
+            *) VERSION="$RELEASE_TAG" ;;
+          esac
+          gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_TAG" \
+            --notes-file release-notes.md \
+            "release/luci-app-wifirelay_${VERSION}-aarch64.ipk" \
+            "release/luci-app-wifirelay_${VERSION}-aarch64.apk"

@@ -1,0 +1,17 @@
+{
+	"luci-wifirelay": {
+		"description": "Grant access to WiFi Relay status and configuration",
+		"read": {
+			"ubus": {
+				"luci.wifirelay": [ "status", "scan" ]
+			},
+			"uci": [ "wifirelay" ]
+		},
+		"write": {
+			"ubus": {
+				"luci.wifirelay": [ "apply" ]
+			},
+			"uci": [ "wifirelay" ]
+		}
+	}
+}

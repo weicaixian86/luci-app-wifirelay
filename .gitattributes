@@ -1,0 +1,10 @@
+# Shell scripts and text files shipped inside release ZIPs must keep Unix LF
+# line endings regardless of the platform used to clone or build.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gz binary
+*.zst binary
+*.ipk binary
+*.apk binary

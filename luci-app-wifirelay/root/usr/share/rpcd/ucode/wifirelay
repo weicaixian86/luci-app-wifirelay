@@ -1,0 +1,216 @@
+// WiFi Relay rpcd backend.
+//
+// Registers the ubus object "luci.wifirelay" used by the LuCI view
+// wifirelay/overview.js. Scanning shells out to the iwinfo CLI so it
+// also works on mtwifi hardware where nl80211 is unavailable.
+
+'use strict';
+
+import { popen, readfile } from 'fs';
+import { cursor } from 'uci';
+
+function valid_dev(dev) {
+	return (dev != null) && match(dev, /^[A-Za-z0-9_.-]+$/) != null;
+}
+
+function iwinfo_scan(dev) {
+	let p = popen(`/usr/bin/iwinfo ${dev} scan 2>/dev/null`, 'r');
+	let text = p.read('all');
+
+	p.close();
+
+	return text;
+}
+
+function classify_encryption(text) {
+	let t = lc(text);
+
+	if (t == 'none' || t == 'off' || t == 'open')
+		return 'none';
+
+	let has_sae = (index(t, 'sae') != -1);
+	let has_psk = (index(t, 'psk') != -1);
+	let has_wpa2 = (index(t, 'wpa2') != -1 || index(t, 'rsn') != -1);
+
+	if (index(t, 'wep') != -1)
+		return 'wep';
+	if (has_sae && (has_psk || has_wpa2))
+		return 'psk2+sae';
+	if (has_sae || index(t, 'wpa3') != -1)
+		return 'sae';
+	if (index(t, 'wpa/wpa2') != -1)
+		return 'psk-mixed';
+	if (has_wpa2)
+		return 'psk2';
+	if (index(t, 'wpa') != -1 || has_psk)
+		return 'psk';
+
+	return 'none';
+}
+
+// The iwinfo CLI prints scan entries as
+//   Cell 01 - Address: AA:BB:CC:DD:EE:FF
+//             ESSID: "name"     (some releases quote the value, some do not)
+//             Mode: Master  Frequency: ...  Channel: 6
+//             Signal: -55 dBm  Quality: 55/70
+//             Encryption: WPA2 PSK (CCMP)
+function parse_scan(text, band) {
+	let networks = [];
+	let cur = null;
+
+	for (let line in split(text, '\n')) {
+		let m;
+
+		if ((m = match(line, /Cell [0-9]+ - Address: ([0-9A-Fa-f:]{17})/))) {
+			if (cur)
+				push(networks, cur);
+
+			cur = {
+				bssid: m[1],
+				ssid: '',
+				signal: -999,
+				channel: 0,
+				security: 'none',
+				band: band
+			};
+		}
+		else if (cur) {
+			if ((m = match(line, /ESSID: "(.*)"/)))
+				cur.ssid = replace(m[1], /\\"/g, '"');
+			else if ((m = match(line, /ESSID: (.+)$/)))
+				cur.ssid = m[1];
+			else if ((m = match(line, /Signal: (-?[0-9]+)/)))
+				cur.signal = int(m[1]);
+			else if ((m = match(line, /Channel: ([0-9]+)/)))
+				cur.channel = int(m[1]);
+			else if ((m = match(line, /Encryption: (.+)$/)))
+				cur.security = classify_encryption(m[1]);
+		}
+	}
+
+	if (cur)
+		push(networks, cur);
+
+	return filter(networks, function(net) {
+		return net.ssid != '' && net.ssid != 'unknown' && net.ssid != 'hidden';
+	});
+}
+
+// Scans double as a signal-strength refresh: candidate ordering follows the
+// stored signal value, so keep saved profiles in sync with reality. Only
+// numeric signal values and uci section names are interpolated, so the
+// command string is injection-safe.
+function update_saved_signals(networks) {
+	let cmd = '';
+	let uci = cursor();
+
+	uci.foreach('wifirelay', 'uplink', function(section) {
+		let best = null;
+
+		for (let net in networks) {
+			if (net.ssid != section.ssid)
+				continue;
+
+			if (section.bssid && lc(section.bssid) != lc(net.bssid))
+				continue;
+
+			if (!best || net.signal > best.signal)
+				best = net;
+		}
+
+		if (best)
+			cmd = cmd + `uci -q set wifirelay.${section['.name']}.signal=${best.signal};`;
+	});
+
+	if (length(cmd)) {
+		let p = popen(`{ ${cmd} uci -q commit wifirelay; } >/dev/null 2>&1`, 'r');
+
+		p.read('all');
+		p.close();
+	}
+}
+
+const methods = {
+	status: {
+		call: function() {
+			let result = {
+				state: 'stopped',
+				uplink: '',
+				message: 'Service is not running'
+			};
+
+			let text = readfile('/var/run/wifirelay.state');
+
+			if (text) {
+				for (let line in split(text, '\n')) {
+					let m = match(line, /^([^=]+)=(.*)$/);
+
+					if (m)
+						result[m[1]] = m[2];
+				}
+			}
+
+			return result;
+		}
+	},
+
+	scan: {
+		args: { band: 'band' },
+		call: function(request) {
+			let band = (request.args.band == '5g') ? '5g' : '2g';
+			let section = (band == '5g') ? 'ap_5g' : 'ap_2g';
+			let networks = [];
+			let uci = cursor();
+
+			// Try the configured mtwifi interface names before the
+			// hard-coded Q30 Pro defaults.
+			let devices = [
+				uci.get('wifirelay', section, 'phy'),
+				uci.get('wifirelay', section, 'iface'),
+				(band == '5g') ? 'rax0' : 'ra0'
+			];
+
+			for (let dev in devices) {
+				if (!valid_dev(dev))
+					continue;
+
+				let text = iwinfo_scan(dev);
+
+				if (text && index(text, 'Cell ') != -1) {
+					networks = parse_scan(text, band);
+					break;
+				}
+			}
+
+			sort(networks, function(a, b) { return b.signal - a.signal; });
+
+			update_saved_signals(networks);
+
+			return { networks: networks };
+		}
+	},
+
+	apply: {
+		// Applying a profile scans candidates and waits for connectivity,
+		// which can take minutes with several saved profiles, so run it
+		// detached and let the client track progress through status.
+		call: function() {
+			let p = popen(
+				'( /usr/sbin/wifirelay apply; ' +
+				'if [ "$(uci -q get wifirelay.global.enabled)" = "1" ]; then ' +
+				'/etc/init.d/wifirelay enable; ' +
+				'/etc/init.d/wifirelay restart; ' +
+				'else ' +
+				'/etc/init.d/wifirelay disable; ' +
+				'/etc/init.d/wifirelay stop; ' +
+				'fi ) >/dev/null 2>&1 &', 'r');
+
+			p.read('all');
+			p.close();
+
+			return { pending: true };
+		}
+	}
+};
+
+return { 'luci.wifirelay': methods };

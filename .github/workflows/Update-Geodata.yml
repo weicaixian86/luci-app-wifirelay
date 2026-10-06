@@ -1,0 +1,26 @@
+name: Update Geodata
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repository data layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f luci-app-wifirelay/Makefile
+          test -f luci-app-wifirelay/root/etc/config/wifirelay
+          test -f luci-app-wifirelay/htdocs/luci-static/resources/view/wifirelay/overview.js
