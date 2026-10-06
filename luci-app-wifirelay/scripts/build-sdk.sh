@@ -45,17 +45,27 @@ tar --zstd -xf "$SDK_ARCHIVE" --strip-components=1 -C "$SDK_DIR"
 			printf '\nsrc-git luci https://git.openwrt.org/project/luci.git;%s\n' "$LUCI_BRANCH" >> "$feed_config"
 		fi
 		# Updating the base feed clones the OpenWrt source tree, so this step
-		# takes a while; installing both feeds afterwards makes every core and
-		# LuCI dependency resolvable to make.
+		# takes a while. Install only the packages the plugin needs at build
+		# time instead of the whole feed: each install resolves its own
+		# dependency closure, while installing all ~2000 feed packages is
+		# slow and fails on unrelated target-specific packages.
 		./scripts/feeds update base luci
-		./scripts/feeds install -p base -a
+		for package in rpcd iwinfo ucode wpad-basic-mbedtls; do
+			echo ">>> Installing base feed package: $package"
+			./scripts/feeds install -p base "$package"
+		done
+		echo ">>> Installing luci feed package: luci"
 		./scripts/feeds install -p luci luci
-		for package in rpcd iwinfo ucode libucode; do
+		for package in rpcd iwinfo ucode libucode wpad-basic-mbedtls; do
 			[ -e "package/feeds/base/$package" ] || {
 				echo "Core package '$package' is not available from the base feed" >&2
 				exit 1
 			}
 		done
+		[ -e "package/feeds/luci/luci" ] || {
+			echo "LuCI metapackage is not available from the luci feed" >&2
+			exit 1
+		}
 	})
 make -C "$SDK_DIR" defconfig
 
