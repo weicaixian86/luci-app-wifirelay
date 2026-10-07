@@ -31,6 +31,12 @@ var callApply = rpc.declare({
 	expect: { pending: false }
 });
 
+// Set while the form is on screen. Programmatic uci changes (scan "use",
+// activate) must re-render the map: on Save & Apply every widget writes its
+// DOM value, which would otherwise clobber the staged changes with the stale
+// values captured at initial render time.
+var redrawForm = null;
+
 function securityLabel(value) {
 	var labels = {
 		'none': '开放网络',
@@ -131,11 +137,16 @@ function renderNetworks(networks) {
 						uci.set('wifirelay', section, 'encryption', network.security == 'sae-mixed' ? 'psk2+sae' : (network.security || 'none'));
 						uci.set('wifirelay', section, 'signal', String(network.signal != null ? network.signal : ''));
 						uci.set('wifirelay', section, 'enabled', '1');
+						uci.set('wifirelay', section, 'key', '');
 						uci.set('wifirelay', 'global', 'active_uplink', section);
+						uci.set('wifirelay', 'global', 'enabled', '1');
 						ui.hideModal();
 						ui.addNotification(null,
 							E('p', '网络“%s”已加入已保存列表，请在下方填写其密码并点击“保存并应用”。'.format(network.ssid || network.bssid)),
 							'info');
+
+						if (redrawForm)
+							return redrawForm();
 					}
 				}, '使用'))
 			]);
@@ -259,6 +270,9 @@ return view.extend({
 			ui.addNotification(null,
 				E('p', '已将配置“%s”设为当前使用，点击“保存并应用”后连接。'.format(uplinkName(section_id))),
 				'info');
+
+			if (redrawForm)
+				return redrawForm();
 		};
 
 		var scan = m.section(form.NamedSection, 'global', 'relay', '扫描上级 WiFi');
@@ -299,7 +313,16 @@ return view.extend({
 		}, 5);
 
 		return m.render().then(function(mapNode) {
-			return E('div', {}, [ statusBox, mapNode ]);
+			var container = E('div', {}, [ statusBox, mapNode ]);
+
+			redrawForm = function() {
+				return m.render().then(function(newNode) {
+					container.replaceChild(newNode, mapNode);
+					mapNode = newNode;
+				});
+			};
+
+			return container;
 		});
 	}
 });
