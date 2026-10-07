@@ -98,6 +98,9 @@ function renderNetworks(networks) {
 	if (!networks || !networks.length)
 		return E('em', {}, '未发现任何网络');
 
+	// dom.create() does not recurse into nested child arrays: a nested array
+	// would be stringified into "[object HTMLTableRowElement]" text, so the
+	// row list must be flattened into the top-level children here.
 	return E('table', { 'class': 'table cbi-section-table' }, [
 		E('tr', { 'class': 'tr table-titles' }, [
 			E('th', { 'class': 'th' }, 'SSID'),
@@ -106,8 +109,8 @@ function renderNetworks(networks) {
 			E('th', { 'class': 'th' }, '加密方式'),
 			E('th', { 'class': 'th' }, 'BSSID'),
 			E('th', { 'class': 'th' }, '操作')
-		]),
-		networks.map(function(network) {
+		])
+	].concat(networks.map(function(network) {
 			return E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td' }, network.ssid || '（隐藏）'),
 				E('td', { 'class': 'td' }, network.band == '5g' ? '5 GHz' : '2.4 GHz'),
@@ -136,8 +139,7 @@ function renderNetworks(networks) {
 					}
 				}, '使用'))
 			]);
-		})
-	]);
+		})));
 }
 
 return view.extend({
