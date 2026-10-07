@@ -136,7 +136,7 @@ const methods = {
 			let result = {
 				state: 'stopped',
 				uplink: '',
-				message: 'Service is not running'
+				message: '服务未运行'
 			};
 
 			let text = readfile('/var/run/wifirelay.state');

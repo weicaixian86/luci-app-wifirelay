@@ -40,10 +40,10 @@ validate_ap() {
 	ssid=$(cfg "ap_$band" ssid)
 	encryption=$(normalize_encryption "$(cfg "ap_$band" encryption)")
 	key=$(cfg "ap_$band" key)
-	[ -n "$ssid" ] || { set_state error '' "Missing $band downstream SSID"; return 1; }
-	[ "${#ssid}" -le 32 ] || { set_state error '' "Invalid $band downstream SSID"; return 1; }
+	[ -n "$ssid" ] || { set_state error '' "缺少 $band 频段下游 SSID"; return 1; }
+	[ "${#ssid}" -le 32 ] || { set_state error '' "$band 频段下游 SSID 无效"; return 1; }
 	if [ "$encryption" != none ] && ! valid_key "$key"; then
-		set_state error '' "Invalid $band downstream WiFi password"
+		set_state error '' "$band 频段下游 WiFi 密码无效"
 		return 1
 	fi
 }
@@ -53,7 +53,7 @@ validate_uplink() {
 	encryption=$(normalize_encryption "$(cfg "$profile" encryption)")
 	key=$(cfg "$profile" key)
 	if [ "$encryption" != none ] && ! valid_key "$key"; then
-		set_state error "$profile" 'Invalid upstream WiFi password'
+		set_state error "$profile" '上级 WiFi 密码无效'
 		return 1
 	fi
 }
@@ -203,7 +203,7 @@ apply_profile() {
 	uci commit firewall 2>/dev/null || true
 	/sbin/wifi reload >/dev/null 2>&1 || true
 	/etc/init.d/network reload >/dev/null 2>&1 || true
-	set_state connecting "$profile" "Applying uplink configuration"
+	set_state connecting "$profile" '正在应用上行配置'
 }
 
 check_network() {
@@ -234,18 +234,18 @@ apply_config() {
 		done
 		uci commit "$WIRELESS"
 		/sbin/wifi reload >/dev/null 2>&1 || true
-		set_state disabled '' 'Relay service is disabled'
+		set_state disabled '' '中继服务已停用'
 		return 0
 	fi
 	for profile in $(profile_candidates "$(cfg global uplink_band)"); do
 		[ -n "$profile" ] || continue
 		apply_profile "$profile" || continue
 		if wait_online; then
-			set_state online "$profile" 'Network is reachable'
+			set_state online "$profile" '网络连接正常'
 			return 0
 		fi
 	done
-	set_state error '' 'No saved uplink is reachable'
+	set_state error '' '所有已保存的上级 WiFi 均无法连接'
 	return 1
 }
 
@@ -259,14 +259,14 @@ try_other_profiles() {
 		fi
 		apply_profile "$profile" || continue
 		if wait_online; then
-			set_state online "$profile" 'Network recovered on alternate uplink'
+			set_state online "$profile" '已切换至备用上级 WiFi，网络恢复'
 			return 0
 		fi
 	done
 	if [ -n "$retry" ]; then
 		apply_profile "$retry" || return 1
 		if wait_online; then
-			set_state online "$retry" 'Network recovered after retry'
+			set_state online "$retry" '重试后网络恢复'
 			return 0
 		fi
 	fi
@@ -281,7 +281,7 @@ monitor() {
 	failures=0
 	while :; do
 		if [ "$(cfg global enabled)" != 1 ]; then
-			set_state disabled '' 'Relay service is disabled'
+			set_state disabled '' '中继服务已停用'
 			sleep "$interval"
 			continue
 		fi
@@ -295,15 +295,15 @@ monitor() {
 		fi
 		if check_network; then
 			failures=0
-			set_state online "$current" 'Network is reachable'
+			set_state online "$current" '网络连接正常'
 		else
 			failures=$((failures + 1))
-			set_state degraded "$current" "Ping failure $failures/$limit"
+			set_state degraded "$current" "Ping 失败 $failures/$limit"
 			if [ "$failures" -ge "$limit" ]; then
 				if try_other_profiles "$current"; then
 					failures=0
 				else
-					set_state error "$current" 'All saved uplinks are unavailable'
+					set_state error "$current" '所有已保存的上级 WiFi 均不可用'
 				fi
 			fi
 		fi
@@ -316,7 +316,7 @@ case "$1" in
 	monitor) monitor ;;
 	check) check_network ;;
 	status)
-		[ -f "$STATE" ] && cat "$STATE" || set_state stopped '' 'No status available'
+		[ -f "$STATE" ] && cat "$STATE" || set_state stopped '' '暂无状态信息'
 		;;
 	*) echo "Usage: $0 {apply|monitor|check|status}" >&2; exit 2 ;;
 esac

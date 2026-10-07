@@ -1,5 +1,5 @@
 {
-	"admin/network/wifirelay": {
+	"admin/services/wifirelay": {
 		"title": "WiFi Relay",
 		"order": 55,
 		"action": {
@@ -11,7 +11,7 @@
 		}
 	},
 
-	"admin/network/wifirelay/overview": {
+	"admin/services/wifirelay/overview": {
 		"title": "Relay Configuration",
 		"order": 10,
 		"action": {
