@@ -8,6 +8,10 @@
 'require poll';
 'require dom';
 
+// UI strings are Simplified Chinese literals instead of _() lookups: the
+// release pipeline ships exactly one package (no luci-i18n-* subpackage),
+// so LuCI translation catalogs never reach the device.
+
 var callStatus = rpc.declare({
 	object: 'luci.wifirelay',
 	method: 'status',
@@ -29,16 +33,16 @@ var callApply = rpc.declare({
 
 function securityLabel(value) {
 	var labels = {
-		'none': _('Open network'),
-		'wep': _('WEP'),
-		'psk': _('WPA-PSK'),
-		'psk2': _('WPA2-PSK'),
-		'psk-mixed': _('WPA-PSK/WPA2-PSK mixed'),
-		'sae': _('WPA3-SAE'),
-		'psk2+sae': _('WPA2-PSK/WPA3-SAE mixed'),
-		'sae-mixed': _('WPA2-PSK/WPA3-SAE mixed')
+		'none': '开放网络',
+		'wep': 'WEP',
+		'psk': 'WPA-PSK',
+		'psk2': 'WPA2-PSK',
+		'psk-mixed': 'WPA-PSK/WPA2-PSK 混合模式',
+		'sae': 'WPA3-SAE',
+		'psk2+sae': 'WPA2-PSK/WPA3-SAE 混合模式',
+		'sae-mixed': 'WPA2-PSK/WPA3-SAE 混合模式'
 	};
-	return labels[value] || value || _('Unknown');
+	return labels[value] || value || '未知';
 }
 
 function uplinkName(sectionId) {
@@ -53,60 +57,60 @@ function uplinkName(sectionId) {
 function reapplyConfiguration() {
 	return callApply().then(function() {
 		ui.addNotification(null,
-			E('p', _('Applying relay configuration. Watch the status above for the result.')),
+			E('p', '正在应用中继配置，请留意上方状态查看结果。'),
 			'info');
 	}).catch(function() {
 		ui.addNotification(null,
-			E('p', _('Failed to start applying. Is the relay backend service running?')),
+			E('p', '启动应用失败，请确认中继后端服务是否正在运行。'),
 			'error');
 	});
 }
 
 function renderStatus(box, status) {
 	var states = {
-		online: [ _('Online'), '#090' ],
-		connecting: [ _('Connecting'), '#e80' ],
-		degraded: [ _('Degraded'), '#e80' ],
-		error: [ _('Failed'), '#c00' ],
-		disabled: [ _('Disabled'), '#888' ],
-		stopped: [ _('Stopped'), '#888' ]
+		online: [ '在线', '#090' ],
+		connecting: [ '连接中', '#e80' ],
+		degraded: [ '已降级', '#e80' ],
+		error: [ '失败', '#c00' ],
+		disabled: [ '已停用', '#888' ],
+		stopped: [ '已停止', '#888' ]
 	};
 
-	var entry = states[status.state] || [ _('Unknown'), '#888' ];
+	var entry = states[status.state] || [ '未知', '#888' ];
 
 	dom.content(box, [
-		E('h3', {}, _('Relay status')),
+		E('h3', {}, '中继状态'),
 		E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:1.5em;align-items:center;padding:.25em 0;' }, [
 			E('span', { 'style': 'font-weight:bold;color:%s'.format(entry[1]) }, entry[0]),
-			status.uplink ? E('span', {}, '%s: %s'.format(_('Uplink'), uplinkName(status.uplink))) : E('span'),
+			status.uplink ? E('span', {}, '%s: %s'.format('上行', uplinkName(status.uplink))) : E('span'),
 			status.message ? E('span', { 'class': 'cbi-value-description' }, status.message) : E('span')
 		]),
 		E('div', { 'class': 'cbi-value-description', 'style': 'padding-bottom:.5em' },
-			_('Health check: ping www.baidu.com every 30 seconds, 3 second timeout, failover after 3 consecutive failures.')),
+			'健康检查：每 30 秒 ping 一次 www.baidu.com，单次超时 3 秒，连续失败 3 次后切换。'),
 		E('button', {
 			'class': 'cbi-button cbi-button-apply',
 			'click': function() { return reapplyConfiguration(); }
-		}, _('Reapply configuration'))
+		}, '重新应用配置')
 	]);
 }
 
 function renderNetworks(networks) {
 	if (!networks || !networks.length)
-		return E('em', {}, _('No networks found'));
+		return E('em', {}, '未发现任何网络');
 
 	return E('table', { 'class': 'table cbi-section-table' }, [
 		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('SSID')),
-			E('th', { 'class': 'th' }, _('Band')),
-			E('th', { 'class': 'th' }, _('Signal')),
-			E('th', { 'class': 'th' }, _('Security')),
-			E('th', { 'class': 'th' }, _('BSSID')),
-			E('th', { 'class': 'th' }, _('Action'))
+			E('th', { 'class': 'th' }, 'SSID'),
+			E('th', { 'class': 'th' }, '频段'),
+			E('th', { 'class': 'th' }, '信号'),
+			E('th', { 'class': 'th' }, '加密方式'),
+			E('th', { 'class': 'th' }, 'BSSID'),
+			E('th', { 'class': 'th' }, '操作')
 		]),
 		networks.map(function(network) {
 			return E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td' }, network.ssid || _('<hidden>')),
-				E('td', { 'class': 'td' }, network.band == '5g' ? _('5 GHz') : _('2.4 GHz')),
+				E('td', { 'class': 'td' }, network.ssid || '（隐藏）'),
+				E('td', { 'class': 'td' }, network.band == '5g' ? '5 GHz' : '2.4 GHz'),
 				E('td', { 'class': 'td' }, (network.signal != null ? '%d dBm'.format(network.signal) : '')),
 				E('td', { 'class': 'td' }, securityLabel(network.security)),
 				E('td', { 'class': 'td' }, network.bssid || ''),
@@ -127,10 +131,10 @@ function renderNetworks(networks) {
 						uci.set('wifirelay', 'global', 'active_uplink', section);
 						ui.hideModal();
 						ui.addNotification(null,
-							E('p', _('Network "%s" added to the saved list. Enter its password below and use Save & Apply.').format(network.ssid || network.bssid)),
+							E('p', '网络“%s”已加入已保存列表，请在下方填写其密码并点击“保存并应用”。'.format(network.ssid || network.bssid)),
 							'info');
 					}
-				}, _('Use')))
+				}, '使用'))
 			]);
 		})
 	]);
@@ -154,80 +158,80 @@ return view.extend({
 
 		renderStatus(statusBox, status);
 
-		var m = new form.Map('wifirelay', _('WiFi Relay'), _('Configure cross-band WiFi relay in router mode with NAT.'));
+		var m = new form.Map('wifirelay', 'WiFi 中继', '在路由模式（NAT）下配置跨频段 WiFi 中继。');
 
-		var s = m.section(form.NamedSection, 'global', 'relay', _('Relay settings'));
+		var s = m.section(form.NamedSection, 'global', 'relay', '中继设置');
 		s.anonymous = true;
 
-		var enabled = s.option(form.Flag, 'enabled', _('Enable relay service'));
+		var enabled = s.option(form.Flag, 'enabled', '启用中继服务');
 		enabled.rmempty = false;
 		enabled.default = '0';
 
-		var uplinkBand = s.option(form.ListValue, 'uplink_band', _('Uplink band'));
-		uplinkBand.value('2g', _('2.4 GHz receives, 5 GHz transmits'));
-		uplinkBand.value('5g', _('5 GHz receives, 2.4 GHz transmits'));
+		var uplinkBand = s.option(form.ListValue, 'uplink_band', '上行频段');
+		uplinkBand.value('2g', '2.4 GHz 接收，5 GHz 发射');
+		uplinkBand.value('5g', '5 GHz 接收，2.4 GHz 发射');
 		uplinkBand.default = '5g';
 
-		var ap = m.section(form.TypedSection, 'ap', _('Downstream AP settings'),
-			_('Each band has independent SSID, password and security settings. LAN stays 192.168.1.1/24 with NAT.'));
+		var ap = m.section(form.TypedSection, 'ap', '下游 AP 设置',
+			'每个频段均可独立设置 SSID、密码和加密方式。LAN 保持 192.168.1.1/24 并启用 NAT。');
 		ap.anonymous = true;
 		ap.addremove = false;
 		ap.sortable = false;
 
-		var apBand = ap.option(form.DummyValue, 'band', _('Band'));
+		var apBand = ap.option(form.DummyValue, 'band', '频段');
 		apBand.cfgvalue = function(section_id) {
 			var band = uci.get('wifirelay', section_id, 'band');
-			return band == '5g' ? _('5 GHz') : _('2.4 GHz');
+			return band == '5g' ? '5 GHz' : '2.4 GHz';
 		};
 
-		var ssid = ap.option(form.Value, 'ssid', _('SSID'));
+		var ssid = ap.option(form.Value, 'ssid', 'SSID');
 		ssid.rmempty = false;
 		ssid.maxlength = 32;
 
-		var key = ap.option(form.Value, 'key', _('Password'));
+		var key = ap.option(form.Value, 'key', '密码');
 		key.password = true;
 		key.rmempty = true;
 
-		var encryption = ap.option(form.ListValue, 'encryption', _('Security'));
-		encryption.value('psk2+sae', _('WPA2-PSK/WPA3-SAE Mixed Mode'));
-		encryption.value('psk2', _('WPA2-PSK'));
-		encryption.value('sae', _('WPA3-SAE'));
-		encryption.value('psk-mixed', _('WPA-PSK/WPA2-PSK Mixed Mode'));
-		encryption.value('psk', _('WPA-PSK'));
-		encryption.value('none', _('Open network (no password)'));
-		encryption.description = _('Choosing "Open network (no password)" hides the password field; this AP will be unencrypted.');
+		var encryption = ap.option(form.ListValue, 'encryption', '加密方式');
+		encryption.value('psk2+sae', 'WPA2-PSK/WPA3-SAE 混合模式');
+		encryption.value('psk2', 'WPA2-PSK');
+		encryption.value('sae', 'WPA3-SAE');
+		encryption.value('psk-mixed', 'WPA-PSK/WPA2-PSK 混合模式');
+		encryption.value('psk', 'WPA-PSK');
+		encryption.value('none', '开放网络（无密码）');
+		encryption.description = '选择“开放网络（无密码）”将隐藏密码输入框，该 AP 将不加密。';
 		key.depends('encryption', 'psk2+sae');
 		key.depends('encryption', 'psk2');
 		key.depends('encryption', 'sae');
 		key.depends('encryption', 'psk-mixed');
 		key.depends('encryption', 'psk');
 
-		var uplink = m.section(form.TableSection, 'uplink', _('Saved upstream WiFi'),
-			_('Sorted by signal strength for automatic selection. Hidden SSIDs and same-name network management are not supported; use BSSID to pin a specific AP.'));
+		var uplink = m.section(form.TableSection, 'uplink', '已保存的上级 WiFi',
+			'按信号强度排序用于自动选择。不支持隐藏 SSID 与同名网络管理；如需固定连接指定 AP，请填写 BSSID。');
 		uplink.anonymous = true;
 		uplink.addremove = true;
 		uplink.sortable = false;
 
-		var band = uplink.option(form.ListValue, 'band', _('Band'));
-		band.value('2g', _('2.4 GHz'));
-		band.value('5g', _('5 GHz'));
+		var band = uplink.option(form.ListValue, 'band', '频段');
+		band.value('2g', '2.4 GHz');
+		band.value('5g', '5 GHz');
 
-		var uplinkSsid = uplink.option(form.Value, 'ssid', _('SSID'));
+		var uplinkSsid = uplink.option(form.Value, 'ssid', 'SSID');
 		uplinkSsid.rmempty = false;
 
-		var bssid = uplink.option(form.Value, 'bssid', _('BSSID (optional)'));
+		var bssid = uplink.option(form.Value, 'bssid', 'BSSID（可选）');
 		bssid.datatype = 'macaddr';
 
-		var uplinkEncryption = uplink.option(form.ListValue, 'encryption', _('Security'));
-		uplinkEncryption.value('psk2+sae', _('WPA2-PSK/WPA3-SAE'));
-		uplinkEncryption.value('psk2', _('WPA2-PSK'));
-		uplinkEncryption.value('sae', _('WPA3-SAE'));
-		uplinkEncryption.value('psk-mixed', _('WPA-PSK/WPA2-PSK'));
-		uplinkEncryption.value('psk', _('WPA-PSK'));
-		uplinkEncryption.value('none', _('Open network'));
-		uplinkEncryption.description = _('For open networks no password is required.');
+		var uplinkEncryption = uplink.option(form.ListValue, 'encryption', '加密方式');
+		uplinkEncryption.value('psk2+sae', 'WPA2-PSK/WPA3-SAE');
+		uplinkEncryption.value('psk2', 'WPA2-PSK');
+		uplinkEncryption.value('sae', 'WPA3-SAE');
+		uplinkEncryption.value('psk-mixed', 'WPA-PSK/WPA2-PSK');
+		uplinkEncryption.value('psk', 'WPA-PSK');
+		uplinkEncryption.value('none', '开放网络');
+		uplinkEncryption.description = '开放网络无需填写密码。';
 
-		var uplinkKey = uplink.option(form.Value, 'key', _('Password'));
+		var uplinkKey = uplink.option(form.Value, 'key', '密码');
 		uplinkKey.password = true;
 		uplinkKey.rmempty = true;
 		uplinkKey.depends('encryption', 'psk2+sae');
@@ -236,34 +240,34 @@ return view.extend({
 		uplinkKey.depends('encryption', 'psk-mixed');
 		uplinkKey.depends('encryption', 'psk');
 
-		var signal = uplink.option(form.Value, 'signal', _('Signal (dBm)'));
+		var signal = uplink.option(form.Value, 'signal', '信号（dBm）');
 		signal.rmempty = true;
-		signal.description = _('Updated automatically on each scan; drives the automatic ordering.');
+		signal.description = '每次扫描后自动更新，用于决定自动选择顺序。';
 
-		var uplinkEnabled = uplink.option(form.Flag, 'enabled', _('Enabled'));
+		var uplinkEnabled = uplink.option(form.Flag, 'enabled', '已启用');
 		uplinkEnabled.rmempty = false;
 		uplinkEnabled.default = '1';
 
-		var activate = uplink.option(form.Button, '_activate', _('Action'));
-		activate.inputtitle = _('Activate');
+		var activate = uplink.option(form.Button, '_activate', '操作');
+		activate.inputtitle = '激活';
 		activate.inputstyle = 'apply';
 		activate.onclick = function(ev, section_id) {
 			uci.set('wifirelay', 'global', 'active_uplink', section_id);
 			uci.set('wifirelay', 'global', 'enabled', '1');
 			ui.addNotification(null,
-				E('p', _('Profile "%s" marked active. Use Save & Apply to connect.').format(uplinkName(section_id))),
+				E('p', '已将配置“%s”设为当前使用，点击“保存并应用”后连接。'.format(uplinkName(section_id))),
 				'info');
 		};
 
-		var scan = m.section(form.NamedSection, 'global', 'relay', _('Scan upstream WiFi'));
+		var scan = m.section(form.NamedSection, 'global', 'relay', '扫描上级 WiFi');
 		scan.anonymous = true;
 
 		[ '2g', '5g' ].forEach(function(bandName) {
 			var scanButton = scan.option(form.Button, '_scan_' + bandName,
-				bandName == '2g' ? _('Scan 2.4 GHz') : _('Scan 5 GHz'));
+				bandName == '2g' ? '扫描 2.4 GHz' : '扫描 5 GHz');
 			scanButton.inputstyle = 'apply';
 			scanButton.onclick = function() {
-				var title = bandName == '2g' ? _('2.4 GHz scan results') : _('5 GHz scan results');
+				var title = bandName == '2g' ? '2.4 GHz 扫描结果' : '5 GHz 扫描结果';
 
 				return callScan(bandName).then(function(networks) {
 					ui.showModal(title, [
@@ -271,11 +275,11 @@ return view.extend({
 						E('div', { 'class': 'right' }, E('button', {
 							'class': 'btn',
 							'click': ui.hideModal
-						}, _('Close')))
+						}, '关闭'))
 					]);
 				}).catch(function() {
 					ui.addNotification(null,
-						E('p', _('The scan failed. Make sure the wireless interfaces are up.')), 'error');
+						E('p', '扫描失败，请确认无线接口已启用。'), 'error');
 				});
 			};
 		});
